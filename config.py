@@ -1,8 +1,16 @@
 import sys
 import requests
 import ast
+import os
+import pprint
+import shutil
 
-def extract_functions_with_doc(filename = 'config.py'):
+pp = pprint.PrettyPrinter(indent=4)
+system_prompt = lambda x : {'role' : 'system', 'content' : x}
+user_prompt = lambda x : {'role' : 'user', 'content' : x}
+assistant_prompt = lambda x : {'role' : 'assistant', 'content' : x}
+
+def extract_functions_with_doc(node, prompt):
     """Extracts functions and their docstrings from given a Python file, formatted for language model parsing.
 
     Args:
@@ -13,9 +21,6 @@ def extract_functions_with_doc(filename = 'config.py'):
     """
     output = ""
 
-    with open(filename, 'r') as file:
-        node = ast.parse(file.read())
-
     functions = [n for n in ast.walk(node) if isinstance(n, ast.FunctionDef)]
 
     for function in functions:
@@ -23,9 +28,9 @@ def extract_functions_with_doc(filename = 'config.py'):
         formatted_docstring = docstring.replace('\n', ' ')
         output += f"Function: '{function.name}'\nDocstring: '{formatted_docstring}'\n\n"
 
-    return output.strip()
+    return output.strip(), prompt
 
-def show_function_code(function_name, filename="config.py"):
+def show_function_code(node, prompt, function_name):
     """
     Parses a Python file and returns the source code of the specified function.
 
@@ -36,20 +41,53 @@ def show_function_code(function_name, filename="config.py"):
     Returns:
     str: The source code of the function or an error message if the function is not found.
     """
-    try:
-        with open(filename, 'r') as file:
-            source = file.read()
-            node = ast.parse(source)
+    for func in [n for n in ast.walk(node) if isinstance(n, ast.FunctionDef)]:
+        if func.name == function_name:
+            return ast.unparse(func), prompt
 
-        for func in [n for n in ast.walk(node) if isinstance(n, ast.FunctionDef)]:
-            if func.name == function_name:
-                return ast.get_source_segment(source, func)
+    return f"Function '{function_name}' not found.", prompt
 
-        return f"Function '{function_name}' not found in '{filename}'."
-    except FileNotFoundError:
-        return f"File '{filename}' not found."
-    except Exception as e:
-        return f"An error occurred: {e}"
+def create_function(node : ast, prompt, function_name):
+
+    functions = [n.name for n in ast.walk(node) if isinstance(n, ast.FunctionDef)]
+    if function_name in functions:
+        return f"Function '{function_name}' already exists"
+
+    # prompt += [
+    #     user_prompt("Function docstring :")
+    # ]
+
+    # docstring, prompt = query_model(prompt)
+
+    prompt += [
+        user_prompt("Input code :")
+    ]
+
+    function_content, prompt = query_model(prompt)
+
+    #docstring_ast = ast.Expr(value=ast.Constant(s=docstring))
+    function_ast = ast.parse(function_content)
+    #function_ast.body[0].body.insert(0, docstring_ast)
+
+    node.body.extend(function_ast.body)
+    
+    return "Function created", prompt
+
+def modify_function(node, prompt, function_name):
+    functions = [n for n in ast.walk(node) if isinstance(n, ast.FunctionDef)]
+
+    found = False
+    for function in functions:
+        if function.name == function_name:
+            node.body.remove(function)
+            found = True
+            
+
+    if not found:
+        return f"Error : no function named '{function_name}'"
+
+    return create_function(node, prompt, function_name)
+
 
 def list_actions(actions):
     '''
@@ -60,8 +98,17 @@ def list_actions(actions):
 
     return "\n".join(actions_str)
 
+def display_prompt(messages):
+    '''
+    Utility function to display the prompt (used for debugging)
+    '''
+
+    for message in messages:
+        print(message['role'].upper() + ": " + message['content'] + "\n")
+
 
 def bootstrap_model(goal):
+
     actions = [
         {
             'name' : 'list',
@@ -71,73 +118,93 @@ def bootstrap_model(goal):
         },
         {
             'name' : "show",
-            'arguments' : ["function-name"],
+            'arguments' : ["<function-name>"],
             'doc' : 'Shows the code of a function with name "function-name"',
             'action' : show_function_code
         },
         {
             "name" : "modify",
-            "arguments" : ["function-name"],
+            "arguments" : ["<function-name>"],
             "doc": "Modify an existing function with name 'function-name'. You will be asked to enter the new code as stdin.",
-            "action" : None
+            "action" : modify_function 
         },
         {
             "name" : "create",
-            "arguments" : ["function-name"],
+            "arguments" : ["<function-name>"],
             "doc": "Create a new function with the name 'function-name'. You will be asked to enter the new code as stdin.",
+            "action" : create_function
+        },
+        {
+            "name" : "exit",
+            "arguments" : ["<message>"],
+            "doc": "Exit and displays the message to the user",
             "action" : None
         }
     ]
 
-    history = f"""> list
-{extract_functions_with_doc()}
-"""
+    node = None
+    with open("config.py", "r") as file:
+        node = ast.parse(file.read())
+    
 
-
+    prompt = [
+        system_prompt(
+            "You are a senior programmer with a lot of expertise in Python and you are " 
+            "tasked to read, understand and then modify the source code of a tool to query "
+            "language models called shell+ai. \n"
+            f"Here is your goal : {goal}\n"
+            "You have access to a special shell-like command interface. This interface has the"
+            f"following command available : \n{list_actions(actions)}" 
+            "\n\nAlways answer with a valid shell-command that is contained in one line. A line break"
+            " will exectute the command."
+        ),
+        assistant_prompt("list"), 
+        user_prompt(extract_functions_with_doc(node, None)[0])
+    ]
 
     while True:
-        prompt = f"""You are a senior programmer with a lot of expertise in Python and you are tasked to read, understand and then modify the source code of a tool to query language models called shell+ai. 
-    
-Here is your goal : {goal}
-
-You have access to a special shell-like command interface. This interface that has the following commands available :  
-{list_actions(actions)}
-
-Always answer with a valid shell-command that is contained in one line. A line break will exectute the command.
-
-{history}
-
-> """   
-
-        #print("Q:", prompt)
-        model_answer = query_model(prompt, stops=["\n"])
-        print("A:", "'" + model_answer + "'")
+        model_answer, prompt = query_model(prompt, stops=["\n"])
         
         if model_answer.strip():
             arguments = model_answer.split()
             repl_response = ""
+            if arguments[0] == "exit":
+                print(" ".join(arguments[1:]))
+                break
+
             for action in actions:
                 if action['name'] == arguments[0]:
                     if len(arguments[1:]) != len(action['arguments']):
                         repl_response = f"Invalid number of arguments for : '{arguments[0]}'"
                     else:
-                        try:
-                            repl_response = action['actions'](*arguments[1:])
-                        except e:
-                            repl_response = "An error occured : " + str(e)
+                        #try:
+                            repl_response, prompt = action['action'](node, prompt, *arguments[1:])
+                        #except Exception as e:
+                        #    repl_response = "An error occured : " + str(e)
             if not repl_response:
                 repl_response = f"Invalid command : '{arguments[0]}' "
         
-        history = f"""{history}
+        prompt += [
+            user_prompt(repl_response)
+        ]
+    
 
-> {model_answer}
-{repl_response}
-"""
+    print("The file is now accessible as config.py")
+    files = os.listdir(".")
+    hightest_number = 0
+    for file in files:
+        if file.startswith("config_"):
+            hightest_number = max(int(file[7:-3]), hightest_number)
+    
+    new_filename = f"config_{hightest_number+1}.py"
+    with open(new_filename, "w") as file:
+        file.write(ast.unparse(node))
+
 
  
 
 
-def query_model(prompt, model="", temperature=0.7, stops=["</s>", "Llama:", "User:"]):
+def query_model(messages, model="gpt-3.5-turbo", temperature=1, stops=[]):
     """
     Queries a local server model for a conversational response. 
     Args:
@@ -149,38 +216,38 @@ def query_model(prompt, model="", temperature=0.7, stops=["</s>", "Llama:", "Use
     str: Model's response or error message.
     """
 
-    url = "http://127.0.0.1:8080/completion"
+    api_key = os.environ.get('OPENAI_API_KEY')
+    if not api_key:
+        print("Error: cannot find open api key in environnement variables. Please set OPENAI_API_KEY accordingly.")
+        exit(1)
+
+    url = "https://api.openai.com/v1/chat/completions"
     payload = {
-        "stream": False,
-        "n_predict": 400,
         "temperature": temperature,
         "stop": stops,
-        "repeat_last_n": 256,
-        "repeat_penalty": 1.18,
-        "top_k": 40,
-        "top_p": 0.5,
-        "tfs_z": 1,
-        "typical_p": 1,
-        "presence_penalty": 0,
-        "frequency_penalty": 0,
-        "mirostat": 0,
-        "mirostat_tau": 5,
-        "mirostat_eta": 0.1,
-        "grammar": "",
-        "n_probs": 0,
-        "image_data": [],
-        "cache_prompt": True,
-        "slot_id": -1,
-        "prompt": prompt
+        "messages": messages,
+        "model" : model,
+        "max_tokens" : 2048
     }
 
-    try:
-        response = requests.post(url, json=payload)
-        response.raise_for_status()
-        response_json = response.json()
-        return response_json.get("content", "")
-    except requests.RequestException as e:
-        return str(e)
+    headers = {
+        "Content-type" : "application/json",
+        "Authorization" : "Bearer " + api_key 
+    }
+
+    print("============= DISPLAYING PROMPT ============")
+    display_prompt(messages)
+
+    response = requests.post(url, json=payload, headers=headers)
+    response.raise_for_status()
+    response_json = response.json()
+    message_answer = response_json['choices'][0]['message']
+
+    print("A:", "'" + message_answer['content'] + "'")
+
+    input()
+
+    return message_answer['content'], messages + [message_answer]
 
 
 def main():
