@@ -2,10 +2,7 @@ import sys
 import requests
 import ast
 import os
-import pprint
-import shutil
 
-pp = pprint.PrettyPrinter(indent=4)
 system_prompt = lambda x : {'role' : 'system', 'content' : x}
 user_prompt = lambda x : {'role' : 'user', 'content' : x}
 assistant_prompt = lambda x : {'role' : 'assistant', 'content' : x}
@@ -48,22 +45,11 @@ def show_function_code(node, prompt, stdin, function_name):
     return f"Function '{function_name}' not found.", prompt
 
 def create_function(node : ast, prompt, function_code : str, function_name):
-
-
     functions = [n.name for n in ast.walk(node) if isinstance(n, ast.FunctionDef)]
     if function_name in functions:
         return f"Function '{function_name}' already exists"
 
-    # prompt += [
-    #     user_prompt("Function docstring :")
-    # ]
-
-    # docstring, prompt = query_model(prompt)
-
-
-    #docstring_ast = ast.Expr(value=ast.Constant(s=docstring))
     function_ast = ast.parse(function_code)
-    #function_ast.body[0].body.insert(0, docstring_ast)
 
     node.body.insert(function_ast.body, -2)
     
@@ -88,26 +74,26 @@ def apply_patch(original, patch):
             return f.read()
 
 
-def modify_function(node : ast.Module, prompt : [str], patch_file : str, function_name : str):
-    import subprocess 
+def modify_function(node : ast.Module, prompt : [str], new_function_body : str, function_name : str):
+    if not new_function_body.strip():
+        return "Error : Nothing specified to stdin. Please call 'modify <function-name>' with only the new body of the function.", prompt
+
     functions = [n for n in ast.walk(node) if isinstance(n, ast.FunctionDef)]
 
     found = False
     for function in functions:
         if function.name == function_name:
             index = node.body.index(function)
+            new_function_module = ast.parse(new_function_body)
+            new_function_definition = [n for n in ast.walk(new_function_module) if isinstance(n, ast.FunctionDef) and n.name == function_name]
 
-            try:
-                patched_code = apply_patch(ast.unparse(function), patch_file)
-            except subprocess.CalledProcessError as e:
-                return "Error with patch : " + e.stdout + e.stderr, prompt
+            if len(new_function_definition) > 1:
+                return "Error : To many functions defined", prompt
 
-            patched_function_node = ast.parse(patched_code).body[0]
-            if not isinstance(patched_function_node, ast.FunctionDef):
-                return f"Error: Patch did not result in a valid function definition", prompt
-            node.body[index] = patched_function_node
-            print (ast.unparse(patched_function_node))
+            if len(new_function_definition) == 0:
+                return f"Error : No functions with name {function_name} defined", prompt
 
+            node.body[index] = new_function_definition[0]
             found = True
 
     if not found:
@@ -152,13 +138,13 @@ def bootstrap_model(goal):
         {
             "name" : "modify",
             "arguments" : ["<function-name>"],
-            "doc": "Modify an existing function with name 'function-name'. Specify a git patch file as stdin to apply to the function.",
+            "doc": "Modify an existing function with name 'function-name'. Follow the command with valid python code containing only the function and its new body.",
             "action" : modify_function
         },
         {
             "name" : "create",
             "arguments" : ["<function-name>"],
-            "doc": "Create a new function with the name 'function-name'. Specify valid python code as stdin.",
+            "doc": "Create a new function with the name 'function-name'. Follow the command with valid python code containing only the function and its body.",
             "action" : create_function
         },
         {
@@ -181,7 +167,7 @@ def bootstrap_model(goal):
             "language models called shell+ai. \n"
             f"Here is your goal : {goal}\n"
             f"You have access to a shell with the following commands : \n{list_actions(actions)}" 
-            "\n\nAlways answer with a valid command. To specify code or git patch file, write it directly after the function call without any markdown syntax."
+            "\n\nAlways answer with a valid command."
         ),
         assistant_prompt("list"), 
         user_prompt(extract_functions_with_doc(node, None, "")[0])
