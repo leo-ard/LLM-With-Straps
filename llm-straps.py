@@ -156,8 +156,7 @@ def bootstrap_model(goal):
     ]
 
     node = None
-    sys.argv[0]
-    with open("config.py", "r") as file:
+    with open(__file__, "r") as file:
         node = ast.parse(file.read())
     
 
@@ -201,13 +200,15 @@ def bootstrap_model(goal):
         ]
     
 
+    # remove the .py, thus resulting in [:-3]
+    self_name = os.path.basename(__file__)[:-3]
     files = os.listdir(".")
     hightest_number = 0
     for file in files:
-        if file.startswith("config_"):
+        if file.startswith(self_name + "__"):
             hightest_number = max(int(file[7:-3]), hightest_number)
     
-    new_filename = f"config_{hightest_number+1}.py"
+    new_filename = f"{self_name}__{hightest_number+1}.py"
     print(f"Output written to {new_filename}")
     with open(new_filename, "w") as file:
         file.write(ast.unparse(node))
@@ -260,6 +261,8 @@ def query_model(messages, model="gpt-4-1106-preview", temperature=1, stops=[]):
     }
 
     print("A:", "'" + message_answer['content'] + "'")
+
+    #input()
 
     return message_answer['content'], messages + [message_answer]
 
