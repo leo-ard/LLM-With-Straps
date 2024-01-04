@@ -1,6 +1,6 @@
 # LLM With Straps : An LLM Client That [Bootstraps](https://en.wikipedia.org/wiki/Bootstrapping_(compilers)) Itself
 
-Have you ever wondered what happens if you let a Large Language Model modify its own source code ? No need to wonder anymore with *LLM with straps*, a tiny shell utility that can modify itself to tailor it to your own specific needs. In other words, this LLM shell client can *bootstrap* itself.
+Have you ever wondered what happens if you let a Large Language Model client modify its own source code ? No need to wonder anymore with *LLM with straps*, a tiny shell utility that can modify itself to tailor it to your own specific needs. In other words, this LLM shell client can *bootstrap* itself.
 
 ## Bootstrapping ? What do you mean ?
 
@@ -28,8 +28,9 @@ $ diff llm-straps__1.py llm-straps.py
 $ cp llm-straps__1.py llm-straps.py # we now use the generated llm-straps as our main one, and it now uses chat gpt 3.5 to do requests !
 ```
 
-Funny enough, this change has been incorporated in this git commit : e37254dda386a63f7173e0e65a332e8a20cb1a58
+Funny enough, this change has been incorporated in this git commit : [e37254d](https://github.com/leo-ard/LLM-With-Straps/commit/e37254dda386a63f7173e0e65a332e8a20cb1a58)
 
+Another demo with a beep command line utility :
 ```
 $ python llm-straps.py --boot "Add a simple command --beep in the 'main' function that prints boop to the screen"
 Function 'main' modified successfully.
@@ -91,6 +92,8 @@ These meanings can slightly vary depending on the context and usage.
 
 This idea was born in a Compiler laboratory at the University of Montreal after a great talk by Ian Arawjo. The discussion went something like this :
 
+> Ian :
 > We have decided to integrate completion tools powered by ChatGPT inside [ChainForge](https://chainforge.ai/). This is a bit circular as ChainForge is used to study LLMs and now we are using ChatGPT to complete part of the prompts used to help us analyze ChatGPT and other models.
 
+> Marc :
 > In compilation, we are used to it, it’s called bootstrapping.
