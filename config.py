@@ -10,7 +10,7 @@ system_prompt = lambda x : {'role' : 'system', 'content' : x}
 user_prompt = lambda x : {'role' : 'user', 'content' : x}
 assistant_prompt = lambda x : {'role' : 'assistant', 'content' : x}
 
-def extract_functions_with_doc(node, prompt):
+def extract_functions_with_doc(node, prompt, stdin):
     """Extracts functions and their docstrings from given a Python file, formatted for language model parsing.
 
     Args:
@@ -30,7 +30,7 @@ def extract_functions_with_doc(node, prompt):
 
     return output.strip(), prompt
 
-def show_function_code(node, prompt, function_name):
+def show_function_code(node, prompt, stdin, function_name):
     """
     Parses a Python file and returns the source code of the specified function.
 
@@ -47,7 +47,8 @@ def show_function_code(node, prompt, function_name):
 
     return f"Function '{function_name}' not found.", prompt
 
-def create_function(node : ast, prompt, function_name):
+def create_function(node : ast, prompt, function_code : str, function_name):
+
 
     functions = [n.name for n in ast.walk(node) if isinstance(n, ast.FunctionDef)]
     if function_name in functions:
@@ -59,34 +60,60 @@ def create_function(node : ast, prompt, function_name):
 
     # docstring, prompt = query_model(prompt)
 
-    prompt += [
-        user_prompt("Input code :")
-    ]
-
-    function_content, prompt = query_model(prompt)
 
     #docstring_ast = ast.Expr(value=ast.Constant(s=docstring))
-    function_ast = ast.parse(function_content)
+    function_ast = ast.parse(function_code)
     #function_ast.body[0].body.insert(0, docstring_ast)
 
-    node.body.extend(function_ast.body)
+    node.body.insert(function_ast.body, -2)
     
     return "Function created", prompt
 
-def modify_function(node, prompt, function_name):
+def apply_patch(original, patch):
+    import tempfile 
+    import subprocess
+
+    with tempfile.NamedTemporaryFile('w+', delete=False) as orig_file, \
+         tempfile.NamedTemporaryFile('w+', delete=False) as patch_file:
+        
+        orig_file.write(original)
+        orig_file.close()
+
+        patch_file.write(patch)
+        patch_file.close()
+
+        subprocess.run(['patch', "-l", "--fuzz=3", orig_file.name, patch_file.name], check=True, capture_output=True, text=True)
+
+        with open(orig_file.name, 'r') as f:
+            return f.read()
+
+
+def modify_function(node : ast.Module, prompt : [str], patch_file : str, function_name : str):
+    import subprocess 
     functions = [n for n in ast.walk(node) if isinstance(n, ast.FunctionDef)]
 
     found = False
     for function in functions:
         if function.name == function_name:
-            node.body.remove(function)
+            index = node.body.index(function)
+
+            try:
+                patched_code = apply_patch(ast.unparse(function), patch_file)
+            except subprocess.CalledProcessError as e:
+                return "Error with patch : " + e.stdout + e.stderr, prompt
+
+            patched_function_node = ast.parse(patched_code).body[0]
+            if not isinstance(patched_function_node, ast.FunctionDef):
+                return f"Error: Patch did not result in a valid function definition", prompt
+            node.body[index] = patched_function_node
+            print (ast.unparse(patched_function_node))
+
             found = True
-            
 
     if not found:
-        return f"Error : no function named '{function_name}'"
+        return f"Error : no function named '{function_name}'", prompt
 
-    return create_function(node, prompt, function_name)
+    return "Function modified", prompt
 
 
 def list_actions(actions):
@@ -125,13 +152,13 @@ def bootstrap_model(goal):
         {
             "name" : "modify",
             "arguments" : ["<function-name>"],
-            "doc": "Modify an existing function with name 'function-name'. You will be asked to enter the new code as stdin.",
-            "action" : modify_function 
+            "doc": "Modify an existing function with name 'function-name'. Specify a git patch file as stdin to apply to the function.",
+            "action" : modify_function
         },
         {
             "name" : "create",
             "arguments" : ["<function-name>"],
-            "doc": "Create a new function with the name 'function-name'. You will be asked to enter the new code as stdin.",
+            "doc": "Create a new function with the name 'function-name'. Specify valid python code as stdin.",
             "action" : create_function
         },
         {
@@ -153,20 +180,21 @@ def bootstrap_model(goal):
             "tasked to read, understand and then modify the source code of a tool to query "
             "language models called shell+ai. \n"
             f"Here is your goal : {goal}\n"
-            "You have access to a special shell-like command interface. This interface has the"
-            f"following command available : \n{list_actions(actions)}" 
-            "\n\nAlways answer with a valid shell-command that is contained in one line. A line break"
-            " will exectute the command."
+            f"You have access to a shell with the following commands : \n{list_actions(actions)}" 
+            "\n\nAlways answer with a valid command. To specify code or git patch file, write it directly after the function call without any markdown syntax."
         ),
         assistant_prompt("list"), 
-        user_prompt(extract_functions_with_doc(node, None)[0])
+        user_prompt(extract_functions_with_doc(node, None, "")[0])
     ]
 
     while True:
-        model_answer, prompt = query_model(prompt, stops=["\n"])
+        model_answer, prompt = query_model(prompt)
+        if model_answer:
+            model_answer : str = model_answer.splitlines()
+            first_line = model_answer[0]
+            stdin = "\n".join(model_answer[1:]) if len(model_answer) > 1 else ""
         
-        if model_answer.strip():
-            arguments = model_answer.split()
+            arguments = first_line.split()
             repl_response = ""
             if arguments[0] == "exit":
                 print(" ".join(arguments[1:]))
@@ -177,10 +205,7 @@ def bootstrap_model(goal):
                     if len(arguments[1:]) != len(action['arguments']):
                         repl_response = f"Invalid number of arguments for : '{arguments[0]}'"
                     else:
-                        #try:
-                            repl_response, prompt = action['action'](node, prompt, *arguments[1:])
-                        #except Exception as e:
-                        #    repl_response = "An error occured : " + str(e)
+                        repl_response, prompt = action['action'](node, prompt, stdin, *arguments[1:])
             if not repl_response:
                 repl_response = f"Invalid command : '{arguments[0]}' "
         
@@ -189,7 +214,6 @@ def bootstrap_model(goal):
         ]
     
 
-    print("The file is now accessible as config.py")
     files = os.listdir(".")
     hightest_number = 0
     for file in files:
@@ -197,14 +221,15 @@ def bootstrap_model(goal):
             hightest_number = max(int(file[7:-3]), hightest_number)
     
     new_filename = f"config_{hightest_number+1}.py"
+    print(f"Output written to {new_filename}")
     with open(new_filename, "w") as file:
         file.write(ast.unparse(node))
 
+def post_process_remove_markdown(message):
+    return "\n".join(filter(lambda line : not line.startswith("```"), message.splitlines()))
+            
 
- 
-
-
-def query_model(messages, model="gpt-3.5-turbo", temperature=1, stops=[]):
+def query_model(messages, model="gpt-4-1106-preview", temperature=1, stops=[]):
     """
     Queries a local server model for a conversational response. 
     Args:
@@ -242,10 +267,14 @@ def query_model(messages, model="gpt-3.5-turbo", temperature=1, stops=[]):
     response.raise_for_status()
     response_json = response.json()
     message_answer = response_json['choices'][0]['message']
+    message_answer = {
+        'role' : message_answer['role'],
+        'content' : post_process_remove_markdown(message_answer['content'])
+    }
 
     print("A:", "'" + message_answer['content'] + "'")
 
-    input()
+    #input()
 
     return message_answer['content'], messages + [message_answer]
 
