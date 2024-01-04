@@ -185,6 +185,6 @@ def main():
     if args.boot:
         bootstrap_model(' '.join(args.prompt), debug=args.debug)
     else:
-        response, _ = query_model(messages=args.prompt, debug=args.debug)
+        response, _ = query_model(messages=[user_prompt(" ".join(args.prompt))], debug=args.debug)
         print(response)
 main()
