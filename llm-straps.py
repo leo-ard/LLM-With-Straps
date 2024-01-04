@@ -202,11 +202,13 @@ def bootstrap_model(goal):
 
     # remove the .py, thus resulting in [:-3]
     self_name = os.path.basename(__file__)[:-3]
+    self_name_prefix = self_name + "__"
     files = os.listdir(".")
     hightest_number = 0
     for file in files:
-        if file.startswith(self_name + "__"):
-            hightest_number = max(int(file[7:-3]), hightest_number)
+        if file.startswith(self_name_prefix):
+            number = int(file[len(self_name_prefix):-3])
+            hightest_number = max(number, hightest_number)
     
     new_filename = f"{self_name}__{hightest_number+1}.py"
     print(f"Output written to {new_filename}")
@@ -261,8 +263,6 @@ def query_model(messages, model="gpt-4-1106-preview", temperature=1, stops=[]):
     }
 
     print("A:", "'" + message_answer['content'] + "'")
-
-    #input()
 
     return message_answer['content'], messages + [message_answer]
 
