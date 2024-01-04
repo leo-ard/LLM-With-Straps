@@ -130,11 +130,13 @@ def bootstrap_model(goal, debug=False):
     hightest_number = 0
     for file in files:
         if file.startswith(self_name_prefix):
-            number = int(file[len(self_name_prefix):-3])
+            try:
+                number = int(file[len(self_name_prefix):-3])
+            except ValueError:
+                number = 0
             hightest_number = max(number, hightest_number)
     new_filename = f'{self_name}__{hightest_number + 1}.py'
-    if debug:
-        print(f'Output written to {new_filename}')
+    print(f'Output written to {new_filename}')
     with open(new_filename, 'w') as file:
         file.write(ast.unparse(node))
 
