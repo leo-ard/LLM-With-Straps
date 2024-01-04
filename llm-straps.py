@@ -1,7 +1,6 @@
 import requests
 import ast
 import os
-
 system_prompt = lambda x: {'role': 'system', 'content': x}
 user_prompt = lambda x: {'role': 'user', 'content': x}
 assistant_prompt = lambda x: {'role': 'assistant', 'content': x}
@@ -143,12 +142,12 @@ def bootstrap_model(goal, debug=False):
 def post_process_remove_markdown(message):
     return '\n'.join(filter(lambda line: not line.startswith('```'), message.splitlines()))
 
-def query_model(messages, model='gpt-4-1106-preview', temperature=1, stops=[], debug=True):
+def query_model(messages, model='gpt-3.5-turbo', temperature=1, stops=[], debug=True):
     """
     Queries a local server model for a conversational response. 
     Args:
     messages (list): Input messages for the model.
-    model (str): Model identifier, default 'gpt-4-1106-preview'.
+    model (str): Model identifier, default 'gpt-3.5-turbo'.
     temperature (float): Randomness of the response, default 0.7.
     stops (list): Stopping conditions for the response, default ["</s>", "Llama:", "User:"].
     debug (bool): Enables debug information if set to True.
